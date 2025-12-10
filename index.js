@@ -1,66 +1,69 @@
 require('dotenv').config();
 const express = require('express');
+const bodyParser = require('body-parser');
 const crypto = require('crypto');
+const fs = require('fs');
 
 const app = express();
-// We need raw body to validate signature. Use bodyParser with verify to keep raw buffer.
-const bodyParser = require('body-parser');
-app.use(bodyParser.json({
-  verify: (req, res, buf) => {
-    // attach raw body for signature verification
-    req.rawBody = buf;
-  }
-}));
+app.use(bodyParser.json());
 
-const VERIFY_TOKEN = process.env.VERIFY_TOKEN || 'my_verify_token';
-const APP_SECRET = process.env.APP_SECRET || 'replace_with_your_app_secret';
+function getPrivateKey() {
+  if (process.env.PRIVATE_KEY) return process.env.PRIVATE_KEY;
+  if (process.env.PRIVATE_KEY_PATH) return fs.readFileSync(process.env.PRIVATE_KEY_PATH, 'utf8');
+  throw new Error('Missing PRIVATE_KEY or PRIVATE_KEY_PATH');
+}
 
-// GET endpoint for webhook verification (Meta challenge)
-app.get('/webhook', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
+function decryptAesKey(encryptedAesKeyB64, privateKeyPem) {
+  const enc = Buffer.from(encryptedAesKeyB64, 'base64');
+  return crypto.privateDecrypt({
+    key: privateKeyPem,
+    padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+    oaepHash: 'sha256'
+  }, enc);
+}
 
-  if (mode && token) {
-    if (mode === 'subscribe' && token === VERIFY_TOKEN) {
-      console.log('Webhook verified');
-      res.status(200).send(challenge);
-    } else {
-      res.sendStatus(403);
-    }
-  } else {
-    res.sendStatus(400);
+function decryptFlowData(encryptedFlowDataB64, aesKey, iv) {
+  const enc = Buffer.from(encryptedFlowDataB64, 'base64');
+  const decipher = crypto.createDecipheriv('aes-128-cbc', aesKey, iv);
+  const dec = Buffer.concat([decipher.update(enc), decipher.final()]);
+  return dec.toString('utf8');
+}
+
+function encryptFlowData(plaintext, aesKey, iv) {
+  const cipher = crypto.createCipheriv('aes-128-cbc', aesKey, iv);
+  const enc = Buffer.concat([cipher.update(Buffer.from(plaintext, 'utf8')), cipher.final()]);
+  return enc.toString('base64');
+}
+
+app.post('/flow', (req, res) => {
+  try {
+    const payload = Array.isArray(req.body) ? req.body[0] : req.body;
+    const { encrypted_flow_data, encrypted_aes_key, initial_vector } = payload || {};
+    if (!encrypted_flow_data || !encrypted_aes_key || !initial_vector) return res.sendStatus(400);
+
+    const privateKeyPem = getPrivateKey();
+    const aesKey = decryptAesKey(encrypted_aes_key, privateKeyPem);
+    if (aesKey.length !== 16) return res.sendStatus(400);
+    const iv = Buffer.from(initial_vector, 'base64');
+    if (iv.length !== 16) return res.sendStatus(400);
+
+    const decrypted = decryptFlowData(encrypted_flow_data, aesKey, iv);
+    let data;
+    console.log({data, "message": "Decrypted flow data"});
+    try { data = JSON.parse(decrypted); } catch { data = { raw: decrypted }; }
+    console.log({data, "message": "After check flow data"});
+
+    const responsePayload = JSON.stringify({ ok: true, data });
+    const encryptedResponseB64 = encryptFlowData(responsePayload, aesKey, iv);
+    res.set('Content-Type', 'text/plain');
+    res.status(200).send(encryptedResponseB64);
+  } catch (e) {
+    res.sendStatus(500);
   }
 });
 
-// POST endpoint to receive Flow submissions / events
-app.post('/webhook', (req, res) => {
-  // Signature sent by Meta in header: "x-hub-signature-256"
-  const signatureHeader = req.get('x-hub-signature-256') || '';
-  const raw = req.rawBody || Buffer.from(JSON.stringify(req.body));
-
-  // compute HMAC SHA256
-  const expectedSig = 'sha256=' + crypto.createHmac('sha256', APP_SECRET).update(raw).digest('hex');
-
-  if (!signatureHeader || !crypto.timingSafeEqual(Buffer.from(expectedSig), Buffer.from(signatureHeader))) {
-    console.warn('Invalid signature', signatureHeader, expectedSig);
-    return res.sendStatus(401);
-  }
-
-  // At this point signature validated. Process the body:
-  const body = req.body;
-  console.log('Received payload:', JSON.stringify(body).slice(0, 1000));
-
-  // Example: handle a flow submission event
-  // (actual paths/fields follow Meta's Flow webhook format)
-  // TODO: add your business logic here (save to DB, call other APIs, respond to user, etc.)
-
-  // Always respond 200 quickly
-  res.sendStatus(200);
-});
-
-// optional health-check
-app.get('/', (req, res) => res.send('OK - 👍🏽'));
+app.get('/', (req, res) => res.send('OK'));
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`Server listening on ${port}`));
+app.listen(port, () => {});
+
