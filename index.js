@@ -11,7 +11,7 @@ function getPrivateKey() {
 
     if (!privateKey) throw new Error('Missing PRIVATE_KEY or PRIVATE_KEY_PATH');
     return "-----BEGIN RSA PRIVATE KEY-----\n" +
-        privateKeyOneLine.match(/.{1,64}/g).join("\n") +
+        privateKey.match(/.{1,64}/g).join("\n") +
         "\n-----END RSA PRIVATE KEY-----";
 }
 
