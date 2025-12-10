@@ -35,6 +35,36 @@ function encryptFlowData(plaintext, aesKey, iv) {
   return enc.toString('base64');
 }
 
+const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || '';
+
+function forwardToMake(payload) {
+  if (!MAKE_WEBHOOK_URL) return Promise.resolve({ skipped: true });
+  const url = new URL(MAKE_WEBHOOK_URL);
+  const data = JSON.stringify(payload);
+  const isHttps = url.protocol === 'https:';
+  const mod = isHttps ? require('https') : require('http');
+  const options = {
+    method: 'POST',
+    hostname: url.hostname,
+    port: url.port || (isHttps ? 443 : 80),
+    path: url.pathname + url.search,
+    headers: {
+      'Content-Type': 'application/json',
+      'Content-Length': Buffer.byteLength(data)
+    }
+  };
+  return new Promise((resolve, reject) => {
+    const req = mod.request(options, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString() }));
+    });
+    req.on('error', reject);
+    req.write(data);
+    req.end();
+  });
+}
+
 app.post('/flow', (req, res) => {
   try {
     const payload = Array.isArray(req.body) ? req.body[0] : req.body;
@@ -53,6 +83,12 @@ app.post('/flow', (req, res) => {
     try { data = JSON.parse(decrypted); } catch { data = { raw: decrypted }; }
     console.log({data, "message": "After check flow data"});
 
+    forwardToMake(data).then((r) => {
+      if (r && r.skipped) console.warn('MAKE_WEBHOOK_URL not set');
+    }).catch((e) => {
+      console.error(e && e.message ? e.message : e);
+    });
+
     const responsePayload = JSON.stringify({ ok: true, data });
     const encryptedResponseB64 = encryptFlowData(responsePayload, aesKey, iv);
     res.set('Content-Type', 'text/plain');
@@ -66,4 +102,3 @@ app.get('/', (req, res) => res.send('OK'));
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {});
-
