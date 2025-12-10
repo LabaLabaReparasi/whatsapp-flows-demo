@@ -94,6 +94,7 @@ app.post('/flow', (req, res) => {
     res.set('Content-Type', 'text/plain');
     res.status(200).send(encryptedResponseB64);
   } catch (e) {
+    console.error(e && e.message ? e.message : e);
     res.sendStatus(500);
   }
 });
@@ -101,4 +102,6 @@ app.post('/flow', (req, res) => {
 app.get('/', (req, res) => res.send('OK'));
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => {});
+app.listen(port, () => {
+    console.log("Server run on port", port);
+});
