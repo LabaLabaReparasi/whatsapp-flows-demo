@@ -45,33 +45,86 @@ function buildMakePayload(data) {
 }
 
 // Build WhatsApp Flows endpoint response based on decrypted request
-function buildServerResponse(decrypted) {
+async function buildServerResponse(decrypted) {
+    /*
+    Request body dari meta
+    // Request body before decryption
+    {
+        "encrypted_flow_data": "SH16...P9LU=",
+        "encrypted_aes_key": "wXO2O...lLug==",
+        "initial_vector": "Grws...4MiA=="
+    }
+
+    // Decrypted request body when flow is launched
+    {
+        "action": "INIT",
+        "flow_token": "<Flow token from the flow message>",
+        "version": "3.0"
+    }
+
+    // Decrypted request body for data_exchange action (eg: footer press)
+    {
+        "action": "data_exchange",
+        "screen": "<CURRENT_SCREEN_ID>",
+        "data": {
+            "some_param": "some value from action payload (string, boolean, or number)"
+        },
+        "flow_token": "<Flow token from the flow message>",
+        "version": "3.0"
+    }
+
+    // Decrypted request body when back button is pressed
+    {
+        "action": "BACK",
+        "screen": "<CURRENT_SCREEN_ID>",
+        "flow_token": "<Flow token from the flow message>",
+        "version": "3.0"
+    }
+    */
+
     const version = decrypted.version || "3.0";
     const screenId = decrypted.screen_id || "ORDER_FORM";
-    const rawAction = decrypted.action;
-    const actionName = typeof rawAction === "string"
-        ? rawAction.toLowerCase()
-        : (rawAction && rawAction.name ? String(rawAction.name).toLowerCase() : "ping");
+    const rawAction = decrypted.action.toLowerCase() || "ping";
+    const flowToken = process.env.WA_FLOW_TOKEN;
 
-    if (actionName === "ping") {
-        return {"data": {"status": "active"}};
+
+    if (rawAction === "init" || rawAction === "back") {
+        return {
+            ORDER_FORM: {
+                "screen": "ORDER_FORM",
+                "data": {}
+            },
+            SUCCESS: {
+                "screen": "SUCCESS",
+                "data": {
+                    "extension_message_response": {
+                        "params": {
+                            "flow_token": flowToken,
+                            // "some_param_name": "PASS_CUSTOM_VALUE"
+                        }
+                    }
+                }
+            },
+        };
     }
-    if (actionName === "launch") {
-        return { version, action: "navigate", screen: screenId, data: decrypted.data || {} };
+    else if (rawAction === "data_exchange") {
+
+        await forwardToMake(decrypted)
+
+        return {
+            "screen": "SUCCESS",
+            "data": {
+                "extension_message_response": {
+                    "params": {
+                        "flow_token": flowToken,
+                        // "optional_param1": "<value1>",
+                        // "optional_param2": "<value2>"
+                    }
+                }
+            }
+        };
     }
-    if (actionName === "back") {
-        return { version, action: "navigate", screen: screenId, data: decrypted.data || {} };
-    }
-    const payload = (rawAction && rawAction.payload) || decrypted.payload || {};
-    return {
-        version,
-        action: "submit",
-        termination: { reason: "SUCCESS" },
-        result: {
-            payload,
-            next_screen: "DEFAULT_FLOW_END"
-        }
-    };
+    return { "data": { "status": "active" } };
 }
 // Forward decrypted payload to Make.com webhook (non-blocking)
 function forwardToMake(payload) {
@@ -115,23 +168,21 @@ app.post("/flow", async (req, res) => {
         const { decryptedBody, aesKeyBuffer, initialVectorBuffer, mode } =
             decryptRequest(payload, PRIVATE_KEY);
 
-        
         // Send to Make.com asynchronously (mapped payload)
         const makePayload = buildMakePayload(decryptedBody);
         console.log({ makePayload });
         await forwardToMake(makePayload)
 
         const serverResponse = buildServerResponse(decryptedBody);
+
+        // MUST RETURN ONLY BASE64 TEXT
         const encryptedResponse = encryptResponse(
             serverResponse,
             aesKeyBuffer,
             initialVectorBuffer,
             mode
         );
-
-        // MUST RETURN ONLY BASE64 TEXT
         res.status(200).type("text/plain").send(encryptedResponse);
-
     } catch (err) {
         console.error("DECRYPT ERROR:", err);
         res.status(500).send("Failed to decrypt request");
