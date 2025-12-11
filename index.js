@@ -45,7 +45,7 @@ function buildMakePayload(data) {
 }
 
 // Build WhatsApp Flows endpoint response based on decrypted request
-async function buildServerResponse(decrypted) {
+function buildServerResponse(decrypted) {
     /*
     Request body dari meta
     // Request body before decryption
@@ -87,7 +87,7 @@ async function buildServerResponse(decrypted) {
     const rawAction = decrypted.action.toLowerCase() || "ping";
     const flowToken = process.env.WA_FLOW_TOKEN;
 
-    console.log({rawAction});
+    console.log({ rawAction });
 
     if (rawAction === "init" || rawAction === "back") {
         return {
@@ -109,9 +109,6 @@ async function buildServerResponse(decrypted) {
         };
     }
     else if (rawAction === "data_exchange") {
-
-        await forwardToMake(decrypted)
-
         return {
             "screen": "SUCCESS",
             "data": {
@@ -170,14 +167,15 @@ app.post("/flow", async (req, res) => {
         const { decryptedBody, aesKeyBuffer, initialVectorBuffer, mode } =
             decryptRequest(payload, PRIVATE_KEY);
 
-        // Send to Make.com asynchronously (mapped payload)
-        // const makePayload = buildMakePayload(decryptedBody);
-        const makePayload = decryptedBody;
-        console.log(makePayload);
-        await forwardToMake(makePayload)
-
+        // Send to Make.com asynchronously (mapped payload) if the action is "data_exchange"
+        if (rawAction === "data_exchange") {
+            // const makePayload = buildMakePayload(decryptedBody);
+            const makePayload = decryptedBody;
+            console.log(makePayload);
+            await forwardToMake(makePayload)
+        }
         const serverResponse = buildServerResponse(decryptedBody);
-        console.log({serverResponse});
+        console.log({ serverResponse });
         // MUST RETURN ONLY BASE64 TEXT
         const encryptedResponse = encryptResponse(
             serverResponse,
