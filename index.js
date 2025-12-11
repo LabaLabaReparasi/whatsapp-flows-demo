@@ -108,7 +108,7 @@ function buildServerResponse(decrypted) {
             },
         };
     }
-    else if (rawAction === "data_exchange") {
+    else if (rawAction === "data_exchange" || rawAction === "complete") {
         return {
             "screen": "SUCCESS",
             "data": {
