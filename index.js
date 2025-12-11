@@ -1,109 +1,245 @@
-require('dotenv').config();
-const express = require('express');
-const bodyParser = require('body-parser');
-const crypto = require('crypto');
+// Load environment config and core deps
+require("dotenv").config();
+const express = require("express");
+const crypto = require("crypto");
 
+const PORT = 3000;
 const app = express();
-app.use(bodyParser.json());
 
-function getPrivateKey() {
-    let privateKey = process.env.WA_FLOW_PRIVATE_KEY;
+// Parse JSON body for Flows requests
+app.use(express.json({ limit: "1mb" }));
 
-    if (!privateKey) throw new Error('Missing PRIVATE_KEY or PRIVATE_KEY_PATH');
-    return "-----BEGIN RSA PRIVATE KEY-----\n" +
-        privateKey.match(/.{1,64}/g).join("\n") +
-        "\n-----END RSA PRIVATE KEY-----";
+// RSA private key used to unwrap AES key (ensure it matches Meta-uploaded public key)
+const PRIVATE_KEY = process.env.WA_FLOW_PRIVATE_KEY.replace(/\\n/g, "\n");
+const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || "";
+
+// Ensure a value is an array (supports comma-separated strings)
+function ensureArray(v) {
+    if (Array.isArray(v)) return v;
+    if (typeof v === "string") return v.split(",").map((s) => s.trim()).filter(Boolean);
+    return v != null ? [v] : [];
 }
 
-function decryptAesKey(encryptedAesKeyB64, privateKeyPem) {
-    const enc = Buffer.from(encryptedAesKeyB64, 'base64');
-    return crypto.privateDecrypt({
-        key: privateKeyPem,
-        padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
-        oaepHash: 'sha256'
-    }, enc);
+// Build Make.com payload from decrypted flow data
+// function buildMakePayload(data) {
+function buildMakePayload(data) {
+
+    const src = (data && (data.payload || data.data || (data.action && data.action.payload))) || data || {};
+    const name = src.name || src.full_name || src.nama || "";
+    const phone = src.phone || src.telephone || src.msisdn || src.whatsapp || "";
+    const domisili = src.domisili || src.city || src.location || "";
+    const jumlah_barang = (src.jumlah_barang || src.quantity || src.qty || "").toString();
+    const tipe_barang_raw = src.tipe_barang || src.items || src.tipe || src.item_type || [];
+    const tipe_barang = ensureArray(tipe_barang_raw);
+    const jenis_kerusakan = src.jenis_kerusakan || src.damage || src.issue || "";
+    const pickup = (src.pickup || src.pick_up || src.is_pickup || "").toString();
+    const screen_id = (data && (data.screen_id || data.screenId || (data.screen && data.screen.id))) || "ORDER_FORM";
+    return {
+        version: "3.0",
+        screen_id,
+        action: {
+            name: "complete",
+            payload: { name, phone, domisili, jumlah_barang, tipe_barang, jenis_kerusakan, pickup }
+        }
+    };
 }
 
-function decryptFlowData(encryptedFlowDataB64, aesKey, iv) {
-    const enc = Buffer.from(encryptedFlowDataB64, 'base64');
-    const decipher = crypto.createDecipheriv('aes-128-cbc', aesKey, iv);
-    const dec = Buffer.concat([decipher.update(enc), decipher.final()]);
-    return dec.toString('utf8');
+// Build WhatsApp Flows endpoint response based on decrypted request
+function buildServerResponse(decrypted) {
+    const version = decrypted.version || "3.0";
+    const screenId = decrypted.screen_id || "ORDER_FORM";
+    const rawAction = decrypted.action;
+    const actionName = typeof rawAction === "string"
+        ? rawAction.toLowerCase()
+        : (rawAction && rawAction.name ? String(rawAction.name).toLowerCase() : "ping");
+
+    if (actionName === "ping") {
+        return {"data": {"status": "active"}};
+    }
+    if (actionName === "launch") {
+        return { version, action: "navigate", screen: screenId, data: decrypted.data || {} };
+    }
+    if (actionName === "back") {
+        return { version, action: "navigate", screen: screenId, data: decrypted.data || {} };
+    }
+    const payload = (rawAction && rawAction.payload) || decrypted.payload || {};
+    return {
+        version,
+        action: "submit",
+        termination: { reason: "SUCCESS" },
+        result: {
+            payload,
+            next_screen: "DEFAULT_FLOW_END"
+        }
+    };
 }
-
-function encryptFlowData(plaintext, aesKey, iv) {
-    const cipher = crypto.createCipheriv('aes-128-cbc', aesKey, iv);
-    const enc = Buffer.concat([cipher.update(Buffer.from(plaintext, 'utf8')), cipher.final()]);
-    return enc.toString('base64');
-}
-
-const MAKE_WEBHOOK_URL = process.env.MAKE_WEBHOOK_URL || '';
-
+// Forward decrypted payload to Make.com webhook (non-blocking)
 function forwardToMake(payload) {
     if (!MAKE_WEBHOOK_URL) return Promise.resolve({ skipped: true });
     const url = new URL(MAKE_WEBHOOK_URL);
     const data = JSON.stringify(payload);
-    const isHttps = url.protocol === 'https:';
-    const mod = isHttps ? require('https') : require('http');
+    const isHttps = url.protocol === "https:";
+    const mod = isHttps ? require("https") : require("http");
     const options = {
-        method: 'POST',
+        method: "POST",
         hostname: url.hostname,
         port: url.port || (isHttps ? 443 : 80),
         path: url.pathname + url.search,
         headers: {
-            'Content-Type': 'application/json',
-            'Content-Length': Buffer.byteLength(data)
+            "Content-Type": "application/json",
+            "Content-Length": Buffer.byteLength(data)
         }
     };
     return new Promise((resolve, reject) => {
         const req = mod.request(options, (res) => {
             const chunks = [];
-            res.on('data', (c) => chunks.push(c));
-            res.on('end', () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString() }));
+            res.on("data", (c) => chunks.push(c));
+            res.on("end", () => resolve({ statusCode: res.statusCode, body: Buffer.concat(chunks).toString() }));
         });
-        req.on('error', reject);
+        req.on("error", reject);
         req.write(data);
         req.end();
     });
 }
 
-app.post('/flow', (req, res) => {
+// Health check endpoint
+app.get("/health", (req, res) => {
+    res.status(200).send("OK");
+});
+
+// Main Flows endpoint: decrypt -> forward to Make -> encrypt response
+app.post("/flow", async (req, res) => {
+    const payload = Array.isArray(req.body) ? req.body[0] : req.body;
+    console.log(payload);
     try {
-        const payload = Array.isArray(req.body) ? req.body[0] : req.body;
-        const { encrypted_flow_data, encrypted_aes_key, initial_vector } = payload || {};
-        if (!encrypted_flow_data || !encrypted_aes_key || !initial_vector) return res.sendStatus(400);
+        const { decryptedBody, aesKeyBuffer, initialVectorBuffer, mode } =
+            decryptRequest(payload, PRIVATE_KEY);
 
-        const privateKeyPem = getPrivateKey();
-        const aesKey = decryptAesKey(encrypted_aes_key, privateKeyPem);
-        if (aesKey.length !== 16) return res.sendStatus(400);
-        const iv = Buffer.from(initial_vector, 'base64');
-        if (iv.length !== 16) return res.sendStatus(400);
+        
+        // Send to Make.com asynchronously
+        // const makePayload = buildMakePayload(decryptedBody);
+        // const makePayload = buildMakePayload(decryptedBody);
+        const makePayload = decryptedBody;
+        console.log({ makePayload });
+        await forwardToMake(makePayload)
 
-        const decrypted = decryptFlowData(encrypted_flow_data, aesKey, iv);
-        let data;
-        console.log({ data, "message": "Decrypted flow data" });
-        try { data = JSON.parse(decrypted); } catch { data = { raw: decrypted }; }
-        console.log({ data, "message": "After check flow data" });
+        const serverResponse = buildServerResponse(decryptedBody);
+        const encryptedResponse = encryptResponse(
+            serverResponse,
+            aesKeyBuffer,
+            initialVectorBuffer,
+            mode
+        );
 
-        forwardToMake(data).then((r) => {
-            if (r && r.skipped) console.warn('MAKE_WEBHOOK_URL not set');
-        }).catch((e) => {
-            console.error(e && e.message ? e.message : e);
-        });
+        // MUST RETURN ONLY BASE64 TEXT
+        res.status(200).type("text/plain").send(encryptedResponse);
 
-        const responsePayload = JSON.stringify({ ok: true, data });
-        const encryptedResponseB64 = encryptFlowData(responsePayload, aesKey, iv);
-        res.set('Content-Type', 'text/plain');
-        res.status(200).send(encryptedResponseB64);
-    } catch (e) {
-        console.error(e && e.message ? e.message : e);
-        res.sendStatus(500);
+    } catch (err) {
+        console.error("DECRYPT ERROR:", err);
+        res.status(500).send("Failed to decrypt request");
     }
 });
 
-app.get('/', (req, res) => res.send('OK'));
+// Decrypt incoming request
+// - RSA-OAEP (SHA-256) unwraps AES key
+// - Try AES-GCM first (ciphertext|authTag), fallback to AES-CBC
+function decryptRequest(payload, privateKeyPem) {
+    const { encrypted_aes_key, encrypted_flow_data, initial_vector } = payload;
 
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-    console.log("Server run on port", port);
+    if (!encrypted_aes_key || !encrypted_flow_data || !initial_vector) {
+        throw new Error("Missing fields in payload");
+    }
+
+    // Decrypt AES key using RSA private key (OAEP-SHA256)
+    const aesKeyBuffer = crypto.privateDecrypt(
+        {
+            key: privateKeyPem,
+            padding: crypto.constants.RSA_PKCS1_OAEP_PADDING,
+            oaepHash: "sha256",
+        },
+        Buffer.from(encrypted_aes_key, "base64")
+    );
+
+    const encryptedBuffer = Buffer.from(encrypted_flow_data, "base64");
+    const iv = Buffer.from(initial_vector, "base64");
+    const keyLen = aesKeyBuffer.length;
+    let decryptedJSON;
+    let mode = "gcm";
+    try {
+        // Attempt AES-GCM (last 16 bytes are auth tag)
+        const TAG_LENGTH = 16;
+        const ciphertext = encryptedBuffer.subarray(0, -TAG_LENGTH);
+        const authTag = encryptedBuffer.subarray(-TAG_LENGTH);
+        const algoGcm = keyLen === 32 ? "aes-256-gcm" : "aes-128-gcm";
+        const decipher = crypto.createDecipheriv(algoGcm, aesKeyBuffer, iv);
+        decipher.setAuthTag(authTag);
+        decryptedJSON = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+        mode = "gcm";
+    } catch (_) {
+        // Fallback AES-CBC (PKCS#7 padding)
+        const algoCbc = keyLen === 32 ? "aes-256-cbc" : "aes-128-cbc";
+        const decipherCbc = crypto.createDecipheriv(algoCbc, aesKeyBuffer, iv);
+        decryptedJSON = Buffer.concat([decipherCbc.update(encryptedBuffer), decipherCbc.final()]).toString("utf8");
+        mode = "cbc";
+    }
+
+    return {
+        decryptedBody: JSON.parse(decryptedJSON),
+        /* The output should be like this
+        {
+            "version": "3.0",
+            "screen_id": "ORDER_FORM",
+            "action": {
+                "name": "complete",
+                "payload": {
+                    "name": "John Doe",
+                    "phone": "+628123456789",
+                    "domisili": "jaksel",
+                    "jumlah_barang": "3",
+                    "tipe_barang": ["koper", "tas"],
+                    "jenis_kerusakan": "Roda patah",
+                    "pickup": "yes"
+                }
+            }
+        }
+        */
+        aesKeyBuffer,
+        initialVectorBuffer: iv,
+        mode,
+    };
+}
+
+// Encrypt response using same mode detected in request
+function encryptResponse(responseObj, aesKeyBuffer, iv, mode = "gcm") {
+    const plaintext = JSON.stringify(responseObj);
+    const keyLen = aesKeyBuffer.length;
+
+    // REQUIRED BY META → flip all IV bytes (bitwise NOT)
+    const flippedIv = Buffer.from(iv.map(b => (~b & 0xff)));
+
+    if (mode === "cbc") {
+        const algoCbc = keyLen === 32 ? "aes-256-cbc" : "aes-128-cbc";
+        const cipher = crypto.createCipheriv(algoCbc, aesKeyBuffer, flippedIv);
+        const encrypted = Buffer.concat([
+            cipher.update(Buffer.from(plaintext, "utf8")),
+            cipher.final()
+        ]);
+        return encrypted.toString("base64");
+    }
+
+    // GCM
+    const algoGcm = keyLen === 32 ? "aes-256-gcm" : "aes-128-gcm";
+    const cipher = crypto.createCipheriv(algoGcm, aesKeyBuffer, flippedIv);
+    const encrypted = Buffer.concat([
+        cipher.update(Buffer.from(plaintext, "utf8")),
+        cipher.final()
+    ]);
+    const authTag = cipher.getAuthTag();
+
+    return Buffer.concat([encrypted, authTag]).toString("base64");
+}
+
+
+app.listen(PORT, () => {
+    console.log("WhatsApp Flows server running on port " + PORT);
 });
