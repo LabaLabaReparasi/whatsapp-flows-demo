@@ -177,7 +177,7 @@ app.post("/flow", async (req, res) => {
         await forwardToMake(makePayload)
 
         const serverResponse = buildServerResponse(decryptedBody);
-
+        console.log({serverResponse});
         // MUST RETURN ONLY BASE64 TEXT
         const encryptedResponse = encryptResponse(
             serverResponse,
