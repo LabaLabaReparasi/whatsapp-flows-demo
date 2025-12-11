@@ -116,10 +116,8 @@ app.post("/flow", async (req, res) => {
             decryptRequest(payload, PRIVATE_KEY);
 
         
-        // Send to Make.com asynchronously
-        // const makePayload = buildMakePayload(decryptedBody);
-        // const makePayload = buildMakePayload(decryptedBody);
-        const makePayload = decryptedBody;
+        // Send to Make.com asynchronously (mapped payload)
+        const makePayload = buildMakePayload(decryptedBody);
         console.log({ makePayload });
         await forwardToMake(makePayload)
 
@@ -235,7 +233,6 @@ function encryptResponse(responseObj, aesKeyBuffer, iv, mode = "gcm") {
         cipher.final()
     ]);
     const authTag = cipher.getAuthTag();
-
     return Buffer.concat([encrypted, authTag]).toString("base64");
 }
 
