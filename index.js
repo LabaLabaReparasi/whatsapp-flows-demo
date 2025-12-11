@@ -87,6 +87,7 @@ async function buildServerResponse(decrypted) {
     const rawAction = decrypted.action.toLowerCase() || "ping";
     const flowToken = process.env.WA_FLOW_TOKEN;
 
+    console.log({rawAction});
 
     if (rawAction === "init" || rawAction === "back") {
         return {
@@ -124,6 +125,7 @@ async function buildServerResponse(decrypted) {
             }
         };
     }
+
     return { "data": { "status": "active" } };
 }
 // Forward decrypted payload to Make.com webhook (non-blocking)
@@ -169,8 +171,9 @@ app.post("/flow", async (req, res) => {
             decryptRequest(payload, PRIVATE_KEY);
 
         // Send to Make.com asynchronously (mapped payload)
-        const makePayload = buildMakePayload(decryptedBody);
-        console.log({ makePayload });
+        // const makePayload = buildMakePayload(decryptedBody);
+        const makePayload = decryptedBody;
+        console.log(makePayload);
         await forwardToMake(makePayload)
 
         const serverResponse = buildServerResponse(decryptedBody);
