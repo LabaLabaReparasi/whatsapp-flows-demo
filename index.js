@@ -166,12 +166,12 @@ app.post("/flow", async (req, res) => {
     try {
         const { decryptedBody, aesKeyBuffer, initialVectorBuffer, mode } =
             decryptRequest(payload, PRIVATE_KEY);
+        console.log(makePayload);
 
         // Send to Make.com asynchronously (mapped payload) if the action is "data_exchange"
         if (decryptedBody.action === "data_exchange") {
             // const makePayload = buildMakePayload(decryptedBody);
             const makePayload = decryptedBody;
-            console.log(makePayload);
             await forwardToMake(makePayload)
         }
         const serverResponse = buildServerResponse(decryptedBody);
