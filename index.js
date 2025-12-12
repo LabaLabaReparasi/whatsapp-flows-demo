@@ -91,22 +91,13 @@ function buildServerResponse(decrypted) {
 
     if (rawAction === "init" || rawAction === "back") {
         return {
-            ORDER_FORM: {
-                "screen": "ORDER_FORM",
-                "data": {}
-            },
-            SUCCESS: {
-                "screen": "SUCCESS",
-                "data": {
-                    "extension_message_response": {
-                        "params": {
-                            "flow_token": flowToken,
-                            // "some_param_name": "PASS_CUSTOM_VALUE"
-                        }
-                    }
-                }
-            },
-        };
+            "screen": screenId,
+            "data": {
+                // "property_1": "value_1",
+                // "property_n": "value_n",
+                // "error_message": "<ERROR-MESSAGE>"
+            }
+        }
     }
     else if (rawAction === "data_exchange" || rawAction === "complete") {
         return {
@@ -162,11 +153,11 @@ app.get("/health", (req, res) => {
 // Main Flows endpoint: decrypt -> forward to Make -> encrypt response
 app.post("/flow", async (req, res) => {
     const payload = Array.isArray(req.body) ? req.body[0] : req.body;
-    console.log(payload);
+    console.log("Line 156", payload);
     try {
         const { decryptedBody, aesKeyBuffer, initialVectorBuffer, mode } =
             decryptRequest(payload, PRIVATE_KEY);
-        console.log(decryptedBody);
+        console.log("Line 160", decryptedBody);
 
         // Send to Make.com asynchronously (mapped payload) if the action is "data_exchange"
         if (decryptedBody.action === "data_exchange") {
@@ -175,7 +166,7 @@ app.post("/flow", async (req, res) => {
             await forwardToMake(makePayload)
         }
         const serverResponse = buildServerResponse(decryptedBody);
-        console.log({ serverResponse });
+        console.log({ Line: 169, ...serverResponse });
         // MUST RETURN ONLY BASE64 TEXT
         const encryptedResponse = encryptResponse(
             serverResponse,
