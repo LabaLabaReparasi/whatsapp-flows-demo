@@ -111,20 +111,20 @@ function buildServerResponse(decrypted) {
             "flow_token": flowToken,
         }
     }
-    else if (rawAction === "complete") {
-        return {
-            "screen": "SUCCESS",
-            "data": {
-                "extension_message_response": {
-                    "params": {
-                        "flow_token": flowToken,
-                        // "optional_param1": "<value1>",
-                        // "optional_param2": "<value2>"
-                    }
-                }
-            }
-        };
-    }
+    // else if (rawAction === "complete") {
+    //     return {
+    //         "screen": "SUCCESS",
+    //         "data": {
+    //             "extension_message_response": {
+    //                 "params": {
+    //                     "flow_token": flowToken,
+    //                     // "optional_param1": "<value1>",
+    //                     // "optional_param2": "<value2>"
+    //                 }
+    //             }
+    //         }
+    //     };
+    // }
 
     return { "data": { "status": "active" } };
 }
@@ -165,11 +165,11 @@ app.get("/health", (req, res) => {
 // Main Flows endpoint: decrypt -> forward to Make -> encrypt response
 app.post("/flow", async (req, res) => {
     const payload = Array.isArray(req.body) ? req.body[0] : req.body;
-    console.log("Line 156", payload);
+    // console.log("Line 156", payload);
     try {
         const { decryptedBody, aesKeyBuffer, initialVectorBuffer, mode } =
             decryptRequest(payload, PRIVATE_KEY);
-        console.log("Line 160", decryptedBody);
+        // console.log("Line 160", decryptedBody);
 
         // Send to Make.com asynchronously (mapped payload) if the action is "data_exchange"
         if (decryptedBody.action === "data_exchange") {
@@ -178,7 +178,7 @@ app.post("/flow", async (req, res) => {
             await forwardToMake(makePayload)
         }
         const serverResponse = buildServerResponse(decryptedBody);
-        console.log({ Line: 169, ...serverResponse });
+        // console.log({ Line: 169, ...serverResponse });
         // MUST RETURN ONLY BASE64 TEXT
         const encryptedResponse = encryptResponse(
             serverResponse,
