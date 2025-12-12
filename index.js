@@ -95,11 +95,23 @@ function buildServerResponse(decrypted) {
             "data": {
                 // "property_1": "value_1",
                 // "property_n": "value_n",
-                // "error_message": "<ERROR-MESSAGE>"
+                "error_message": "<ERROR-MESSAGE>"
             }
         }
     }
-    else if (rawAction === "data_exchange" || rawAction === "complete") {
+    else if (rawAction === "data_exchange") {
+        return {
+            "version": version,
+            "action": "complete",
+            "screen": screenId,
+            "data": {
+                // "prop_1": "value_1",
+                // "prop_n": "value_n"
+            },
+            "flow_token": flowToken,
+        }
+    }
+    else if (rawAction === "complete") {
         return {
             "screen": "SUCCESS",
             "data": {
