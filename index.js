@@ -100,15 +100,27 @@ function buildServerResponse(decrypted) {
         }
     }
     else if (rawAction === "data_exchange") {
+        // return {
+        //     "version": version,
+        //     "action": "complete",
+        //     "screen": screenId,
+        //     "data": {
+        //         // "prop_1": "value_1",
+        //         // "prop_n": "value_n"
+        //     },
+        //     "flow_token": flowToken,
+        // }
         return {
-            "version": version,
-            "action": "complete",
-            "screen": screenId,
+            "screen": "SUCCESS",
             "data": {
-                // "prop_1": "value_1",
-                // "prop_n": "value_n"
-            },
-            "flow_token": flowToken,
+                "extension_message_response": {
+                    "params": {
+                        "flow_token": flowToken,
+                        // "optional_param1": "<value1>",
+                        // "optional_param2": "<value2>"
+                    }
+                }
+            }
         }
     }
     // else if (rawAction === "complete") {
