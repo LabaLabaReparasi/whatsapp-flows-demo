@@ -85,9 +85,9 @@ function buildServerResponse(decrypted) {
     const version = decrypted.version || "3.0";
     const screenId = decrypted.screen_id || "ORDER_FORM";
     const rawAction = decrypted.action.toLowerCase() || "ping";
-    const flowToken = process.env.WA_FLOW_TOKEN;
+    const flowToken = decrypted.flow_token || "";
 
-    console.log({ rawAction });
+    // console.log({ rawAction });
 
     if (rawAction === "init" || rawAction === "back") {
         return {
@@ -181,7 +181,7 @@ app.post("/flow", async (req, res) => {
     try {
         const { decryptedBody, aesKeyBuffer, initialVectorBuffer, mode } =
             decryptRequest(payload, PRIVATE_KEY);
-        console.log("Line 160", decryptedBody);
+        console.log({ header: req.headers, "Decrypted Body": decryptedBody });
 
         // Send to Make.com asynchronously (mapped payload) if the action is "data_exchange"
         if (decryptedBody.action === "data_exchange") {
